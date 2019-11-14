@@ -1,8 +1,8 @@
 # sansay exporter
 
-[
+
 The sansay exporter allows sansay probing of endpoints over
-HTTP, HTTPS.
+HTTP, HTTPS.  Much of this code was taken from [snmp_exporter](https://github.com/prometheus/snmp_exporter).
 
 ## Running this software
 
@@ -19,7 +19,7 @@ Then:
 
 *Note: You may want to [enable ipv6 in your docker configuration](https://docs.docker.com/v17.09/engine/userguide/networking/default_network/ipv6/)*
 
-    docker run --rm -d -p 9115:9115 --name sansay_exporter -v `pwd`:/config prom/sansay-exporter:master --config.file=/config/sansay.yml
+    docker run --rm -d -p 9116:9116 --name sansay_exporter
 
 ### Checking the results
 

@@ -106,6 +106,7 @@ type Trunk struct {
 	FifteenPDD         string
 	HourPDD            string
 	DayPDD             string
+	Direction          string
 }
 type collector struct {
 	target   string
@@ -135,6 +136,7 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 		return
 	}
 	for _, table := range sansay.Database.Table {
+		var direction string
 		switch table.Name {
 		case "system_stat":
 			for _, row := range table.Row {
@@ -164,11 +166,16 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 				}
 			}
 			// Resource tables
-		// case "ingress_stat":
-		// case "gw_egress_stat":
-		default:
+		case "ingress_stat":
+			direction = "ingress"
+			fallthrough
+		case "gw_egress_stat":
+			if direction == "" {
+				direction = "egress"
+			}
 			for _, row := range table.Row {
 				trunk := Trunk{}
+				trunk.Direction = direction
 				for _, field := range row.Field {
 					if field.Name == "trunk_id" {
 						field.Name = "trunkId"
@@ -177,11 +184,9 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 					if !ok {
 						fieldName = field.Name
 					}
-					if ok {
-						err := setField(&trunk, fieldName, field.Text)
-						if err != nil {
-							ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
-						}
+					err := setField(&trunk, fieldName, field.Text)
+					if err != nil {
+						ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
 					}
 				}
 				err := addTrunkMetrics(ch, trunk, resourceMetrics)
@@ -271,10 +276,18 @@ func addTrunkMetrics(ch chan<- prometheus.Metric, trunk Trunk, metricNames []str
 			ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
 			continue
 		}
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(metricName, "", []string{"trunkgroup", "alias"}, nil),
-			prometheus.GaugeValue,
-			floatValue, trunk.TrunkId, trunk.Alias)
+		//fmt.Printf("New Metric: %s TG=%s Alias=%s\n", metricName, trunk.TrunkId, trunk.Alias)
+		if trunk.Direction == "" {
+			ch <- prometheus.MustNewConstMetric(
+				prometheus.NewDesc(metricName, "", []string{"trunkgroup", "alias"}, nil),
+				prometheus.GaugeValue,
+				floatValue, trunk.TrunkId, trunk.Alias)
+		} else {
+			ch <- prometheus.MustNewConstMetric(
+				prometheus.NewDesc(metricName, "", []string{"trunkgroup", "alias", "direction"}, nil),
+				prometheus.GaugeValue,
+				floatValue, trunk.TrunkId, trunk.Alias, trunk.Direction)
+		}
 	}
 	return nil
 }
@@ -296,7 +309,7 @@ func setField(v interface{}, name string, value string) error {
 	// Lookup field by name
 	fv := rv.FieldByName(name)
 	if !fv.IsValid() {
-		return fmt.Errorf("not a field name: %s", name)
+		return nil // fmt.Errorf("not a field name: %s", name)
 	}
 
 	// Field must be exported

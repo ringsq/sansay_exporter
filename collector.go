@@ -31,6 +31,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+var realtimeMetrics = []string{"NumOrig",
+	"NumTerm",
+	"Cps",
+	"NumPeak",
+	"TotalCLZ",
+	"NumCLZCps",
+	"TotalLimit",
+	"CpsLimit"}
+
 type Sansay struct {
 	XMLName  xml.Name `xml:"mysqldump"`
 	Text     string   `xml:",chardata"`
@@ -51,24 +60,64 @@ type Sansay struct {
 	} `xml:"database"`
 }
 
+var trunkfields = map[string]string{
+	"1st15mins_call_attempt":     "FifteenCallAttempt",
+	"1st15mins_call_answer":      "FifteenCallAnswer",
+	"1st15mins_call_fail":        "FifteenCallFail",
+	"1h_call_attempt":            "HourCallAttempt",
+	"1h_call_answer":             "HourCallAnswer",
+	"1h_call_fail":               "HourCallFail",
+	"24h_call_attempt":           "DayCallAttempt",
+	"24h_call_answer":            "DayCallAnswer",
+	"24h_call_fail":              "DayCallFail",
+	"1st15mins_call_durationSec": "FifteenDuration",
+	"1h_call_durationSec":        "HourDuration",
+	"24h_call_durationSec":       "DayDuration",
+	"1st15mins_pdd_ms":           "FifteenPDD",
+	"1h_pdd_ms":                  "HourPDD",
+	"24h_pdd_ms":                 "DayPDD",
+}
+var resourceMetrics = make([]string, 0, len(trunkfields))
+
 type Trunk struct {
-	TrunkId    string
-	Alias      string
-	Fqdn       string
-	NumOrig    string
-	NumTerm    string
-	Cps        string
-	NumPeak    string
-	TotalCLZ   string
-	NumCLZCps  string
-	TotalLimit string
-	CpsLimit   string
+	TrunkId            string
+	Alias              string
+	Fqdn               string
+	NumOrig            string
+	NumTerm            string
+	Cps                string
+	NumPeak            string
+	TotalCLZ           string
+	NumCLZCps          string
+	TotalLimit         string
+	CpsLimit           string
+	FifteenCallAttempt string
+	FifteenCallAnswer  string
+	FifteenCallFail    string
+	HourCallAttempt    string
+	HourCallAnswer     string
+	HourCallFail       string
+	DayCallAttempt     string
+	DayCallAnswer      string
+	DayCallFail        string
+	FifteenDuration    string
+	HourDuration       string
+	DayDuration        string
+	FifteenPDD         string
+	HourPDD            string
+	DayPDD             string
 }
 type collector struct {
 	target   string
 	username string
 	password string
 	logger   log.Logger
+}
+
+func init() {
+	for _, value := range trunkfields {
+		resourceMetrics = append(resourceMetrics, value)
+	}
 }
 
 // Describe implements Prometheus.Collector.
@@ -79,7 +128,7 @@ func (c collector) Describe(ch chan<- *prometheus.Desc) {
 // Collect implements Prometheus.Collector.
 func (c collector) Collect(ch chan<- prometheus.Metric) {
 	start := time.Now()
-	sansay, err := ScrapeTarget(c.target, c.username, c.password, c.logger)
+	sansay, err := ScrapeTarget(c)
 	if err != nil {
 		level.Info(c.logger).Log("msg", "Error scraping target", "err", err)
 		ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
@@ -108,10 +157,36 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 					}
 				}
 				if trunk.Fqdn == "Group" {
-					err := addTrunkMetrics(ch, trunk)
+					err := addTrunkMetrics(ch, trunk, realtimeMetrics)
 					if err != nil {
 						ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
 					}
+				}
+			}
+			// Resource tables
+		// case "ingress_stat":
+		// case "gw_egress_stat":
+		default:
+			for _, row := range table.Row {
+				trunk := Trunk{}
+				for _, field := range row.Field {
+					if field.Name == "trunk_id" {
+						field.Name = "trunkId"
+					}
+					fieldName, ok := trunkfields[field.Name]
+					if !ok {
+						fieldName = field.Name
+					}
+					if ok {
+						err := setField(&trunk, fieldName, field.Text)
+						if err != nil {
+							ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
+						}
+					}
+				}
+				err := addTrunkMetrics(ch, trunk, resourceMetrics)
+				if err != nil {
+					ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
 				}
 			}
 		}
@@ -123,7 +198,12 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 		time.Since(start).Seconds())
 }
 
-func ScrapeTarget(target string, username string, password string, logger log.Logger) (Sansay, error) {
+// ScrapeTarget scrapes the Sansay API
+func ScrapeTarget(c collector) (Sansay, error) {
+	target := c.target
+	username := c.username
+	password := c.password
+	logger := c.logger
 	var sansay Sansay
 
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
@@ -177,15 +257,8 @@ func addMetric(ch chan<- prometheus.Metric, name string, value string) error {
 		floatValue)
 	return nil
 }
-func addTrunkMetrics(ch chan<- prometheus.Metric, trunk Trunk) error {
-	for _, metric := range []string{"NumOrig",
-		"NumTerm",
-		"Cps",
-		"NumPeak",
-		"TotalCLZ",
-		"NumCLZCps",
-		"TotalLimit",
-		"CpsLimit"} {
+func addTrunkMetrics(ch chan<- prometheus.Metric, trunk Trunk, metricNames []string) error {
+	for _, metric := range metricNames {
 		metricName := fmt.Sprintf("sansay_trunk_%s", strings.ToLower(metric))
 
 		value, err := getField(&trunk, metric)

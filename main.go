@@ -31,8 +31,7 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
-const targetPath = "/SSConfig/webresources/stats/realtime"
-const resourcePath = "/SSConfig/webresources/stats/resource"
+const targetPath = "/SSConfig/webresources/stats/"
 
 var (
 	listenAddress = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9116").String()
@@ -78,10 +77,8 @@ func handler(w http.ResponseWriter, r *http.Request, logger log.Logger) {
 
 	start := time.Now()
 	registry := prometheus.NewRegistry()
-	resourceCollector := collector{target: fmt.Sprintf("%s://%s%s", protocol, target, resourcePath), username: username, password: password, logger: logger}
-	//collector := collector{target: fmt.Sprintf("%s://%s%s", protocol, target, targetPath), username: username, password: password, logger: logger}
-	//registry.MustRegister(collector)
-	registry.MustRegister(resourceCollector)
+	collector := collector{target: fmt.Sprintf("%s://%s%s", protocol, target, targetPath), username: username, password: password, logger: logger}
+	registry.MustRegister(collector)
 	// Delegate http serving to Prometheus client library, which will call collector.Collect.
 	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	h.ServeHTTP(w, r)

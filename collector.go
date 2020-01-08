@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -61,52 +62,52 @@ type Sansay struct {
 }
 
 var trunkfields = map[string]string{
-	"1st15mins_call_attempt":     "FifteenCallAttempt",
-	"1st15mins_call_answer":      "FifteenCallAnswer",
-	"1st15mins_call_fail":        "FifteenCallFail",
-	"1h_call_attempt":            "HourCallAttempt",
-	"1h_call_answer":             "HourCallAnswer",
-	"1h_call_fail":               "HourCallFail",
-	"24h_call_attempt":           "DayCallAttempt",
-	"24h_call_answer":            "DayCallAnswer",
-	"24h_call_fail":              "DayCallFail",
-	"1st15mins_call_durationSec": "FifteenDuration",
-	"1h_call_durationSec":        "HourDuration",
-	"24h_call_durationSec":       "DayDuration",
-	"1st15mins_pdd_ms":           "FifteenPDD",
-	"1h_pdd_ms":                  "HourPDD",
-	"24h_pdd_ms":                 "DayPDD",
+	"1st15mins_call_attempt":     "Fifteen_CallAttempt",
+	"1st15mins_call_answer":      "Fifteen_CallAnswer",
+	"1st15mins_call_fail":        "Fifteen_CallFail",
+	"1h_call_attempt":            "Hour_CallAttempt",
+	"1h_call_answer":             "Hour_CallAnswer",
+	"1h_call_fail":               "Hour_CallFail",
+	"24h_call_attempt":           "Day_CallAttempt",
+	"24h_call_answer":            "Day_CallAnswer",
+	"24h_call_fail":              "Day_CallFail",
+	"1st15mins_call_durationSec": "Fifteen_Duration",
+	"1h_call_durationSec":        "Hour_Duration",
+	"24h_call_durationSec":       "Day_Duration",
+	"1st15mins_pdd_ms":           "Fifteen_PDD",
+	"1h_pdd_ms":                  "Hour_PDD",
+	"24h_pdd_ms":                 "Day_PDD",
 }
 var resourceMetrics = make([]string, 0, len(trunkfields))
 
 type Trunk struct {
-	TrunkId            string
-	Alias              string
-	Fqdn               string
-	NumOrig            string
-	NumTerm            string
-	Cps                string
-	NumPeak            string
-	TotalCLZ           string
-	NumCLZCps          string
-	TotalLimit         string
-	CpsLimit           string
-	FifteenCallAttempt string
-	FifteenCallAnswer  string
-	FifteenCallFail    string
-	HourCallAttempt    string
-	HourCallAnswer     string
-	HourCallFail       string
-	DayCallAttempt     string
-	DayCallAnswer      string
-	DayCallFail        string
-	FifteenDuration    string
-	HourDuration       string
-	DayDuration        string
-	FifteenPDD         string
-	HourPDD            string
-	DayPDD             string
-	Direction          string
+	TrunkId             string
+	Alias               string
+	Fqdn                string
+	NumOrig             string
+	NumTerm             string
+	Cps                 string
+	NumPeak             string
+	TotalCLZ            string
+	NumCLZCps           string
+	TotalLimit          string
+	CpsLimit            string
+	Fifteen_CallAttempt string
+	Fifteen_CallAnswer  string
+	Fifteen_CallFail    string
+	Hour_CallAttempt    string
+	Hour_CallAnswer     string
+	Hour_CallFail       string
+	Day_CallAttempt     string
+	Day_CallAnswer      string
+	Day_CallFail        string
+	Fifteen_Duration    string
+	Hour_Duration       string
+	Day_Duration        string
+	Fifteen_PDD         string
+	Hour_PDD            string
+	Day_PDD             string
+	Direction           string
 }
 type collector struct {
 	target   string
@@ -128,13 +129,45 @@ func (c collector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements Prometheus.Collector.
 func (c collector) Collect(ch chan<- prometheus.Metric) {
+	paths := []string{"realtime", "resource"}
+	var wg sync.WaitGroup
+	var err error
+	var sansay Sansay
 	start := time.Now()
-	sansay, err := ScrapeTarget(c)
-	if err != nil {
-		level.Info(c.logger).Log("msg", "Error scraping target", "err", err)
-		ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
-		return
+	results := make(chan interface{})
+	defer close(results)
+	for _, path := range paths {
+		wg.Add(1)
+		go ScrapeTarget(c, path, results, &wg)
 	}
+	for i := 0; i < len(paths); i++ {
+		result := <-results
+		switch obj := result.(type) {
+		case error:
+			err = obj
+		case Sansay:
+			err = nil
+			sansay = obj
+		default:
+			err = errors.New("Invalid type returned from target")
+		}
+
+		if err != nil {
+			level.Info(c.logger).Log("msg", "Error scraping target", "err", err)
+			ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
+			return
+		}
+		c.processCollection(ch, sansay)
+	}
+	wg.Wait()
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc("sansay_scrape_duration_seconds", "Total sansay time scrape took (walk and processing).", nil, nil),
+		prometheus.GaugeValue,
+		time.Since(start).Seconds())
+
+}
+
+func (c collector) processCollection(ch chan<- prometheus.Metric, sansay Sansay) {
 	for _, table := range sansay.Database.Table {
 		var direction string
 		switch table.Name {
@@ -196,16 +229,11 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 			}
 		}
 	}
-
-	ch <- prometheus.MustNewConstMetric(
-		prometheus.NewDesc("sansay_scrape_duration_seconds", "Total sansay time scrape took (walk and processing).", nil, nil),
-		prometheus.GaugeValue,
-		time.Since(start).Seconds())
 }
 
 // ScrapeTarget scrapes the Sansay API
-func ScrapeTarget(c collector) (Sansay, error) {
-	target := c.target
+func ScrapeTarget(c collector, path string, result chan<- interface{}, wg *sync.WaitGroup) {
+	target := fmt.Sprintf("%s%s", c.target, path)
 	username := c.username
 	password := c.password
 	logger := c.logger
@@ -218,13 +246,17 @@ func ScrapeTarget(c collector) (Sansay, error) {
 	_, err := url.Parse(target)
 	if err != nil {
 		level.Error(logger).Log("msg", "Could not parse target URL", "err", err)
-		return sansay, err
+		result <- err
+		wg.Done()
+		return
 	}
 	client := &http.Client{}
 	request, err := http.NewRequest("GET", target, http.NoBody)
 	if err != nil {
 		level.Error(logger).Log("msg", "Error creating HTTP request", "err", err)
-		return sansay, err
+		result <- err
+		wg.Done()
+		return
 	}
 
 	request.SetBasicAuth(username, password)
@@ -232,7 +264,9 @@ func ScrapeTarget(c collector) (Sansay, error) {
 
 	if err != nil {
 		level.Error(logger).Log("msg", "Error for HTTP request", "err", err)
-		return sansay, err
+		result <- err
+		wg.Done()
+		return
 	}
 	level.Info(logger).Log("msg", "Received HTTP response", "status_code", resp.StatusCode)
 	defer resp.Body.Close()
@@ -240,14 +274,20 @@ func ScrapeTarget(c collector) (Sansay, error) {
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		level.Info(logger).Log("msg", "Failed to read HTTP response body", "err", err)
-		return sansay, err
+		result <- err
+		wg.Done()
+		return
 	}
 	err = xml.Unmarshal(body, &sansay)
 	if err != nil {
 		level.Error(logger).Log("msg", "Error parsing XML", "err", err)
-		return sansay, err
+		result <- err
+		wg.Done()
+		return
 	}
-	return sansay, nil
+	result <- sansay
+	wg.Done()
+	return
 }
 
 func addMetric(ch chan<- prometheus.Metric, name string, value string) error {

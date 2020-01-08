@@ -62,15 +62,15 @@ type Sansay struct {
 }
 
 var trunkfields = map[string]string{
-	"1st15mins_call_attempt":     "Fifteen_CallAttempt",
-	"1st15mins_call_answer":      "Fifteen_CallAnswer",
-	"1st15mins_call_fail":        "Fifteen_CallFail",
-	"1h_call_attempt":            "Hour_CallAttempt",
-	"1h_call_answer":             "Hour_CallAnswer",
-	"1h_call_fail":               "Hour_CallFail",
-	"24h_call_attempt":           "Day_CallAttempt",
-	"24h_call_answer":            "Day_CallAnswer",
-	"24h_call_fail":              "Day_CallFail",
+	"1st15mins_call_attempt":     "Fifteen_Calls_Attempt",
+	"1st15mins_call_answer":      "Fifteen_Calls_Answer",
+	"1st15mins_call_fail":        "Fifteen_Calls_Fail",
+	"1h_call_attempt":            "Hour_Calls_Attempt",
+	"1h_call_answer":             "Hour_Calls_Answer",
+	"1h_call_fail":               "Hour_Calls_Fail",
+	"24h_call_attempt":           "Day_Calls_Attempt",
+	"24h_call_answer":            "Day_Calls_Answer",
+	"24h_call_fail":              "Day_Calls_Fail",
 	"1st15mins_call_durationSec": "Fifteen_Duration",
 	"1h_call_durationSec":        "Hour_Duration",
 	"24h_call_durationSec":       "Day_Duration",
@@ -81,33 +81,33 @@ var trunkfields = map[string]string{
 var resourceMetrics = make([]string, 0, len(trunkfields))
 
 type Trunk struct {
-	TrunkId             string
-	Alias               string
-	Fqdn                string
-	NumOrig             string
-	NumTerm             string
-	Cps                 string
-	NumPeak             string
-	TotalCLZ            string
-	NumCLZCps           string
-	TotalLimit          string
-	CpsLimit            string
-	Fifteen_CallAttempt string
-	Fifteen_CallAnswer  string
-	Fifteen_CallFail    string
-	Hour_CallAttempt    string
-	Hour_CallAnswer     string
-	Hour_CallFail       string
-	Day_CallAttempt     string
-	Day_CallAnswer      string
-	Day_CallFail        string
-	Fifteen_Duration    string
-	Hour_Duration       string
-	Day_Duration        string
-	Fifteen_PDD         string
-	Hour_PDD            string
-	Day_PDD             string
-	Direction           string
+	TrunkId               string
+	Alias                 string
+	Fqdn                  string
+	NumOrig               string
+	NumTerm               string
+	Cps                   string
+	NumPeak               string
+	TotalCLZ              string
+	NumCLZCps             string
+	TotalLimit            string
+	CpsLimit              string
+	Fifteen_Calls_Attempt string
+	Fifteen_Calls_Answer  string
+	Fifteen_Calls_Fail    string
+	Hour_Calls_Attempt    string
+	Hour_Calls_Answer     string
+	Hour_Calls_Fail       string
+	Day_Calls_Attempt     string
+	Day_Calls_Answer      string
+	Day_Calls_Fail        string
+	Fifteen_Duration      string
+	Hour_Duration         string
+	Day_Duration          string
+	Fifteen_PDD           string
+	Hour_PDD              string
+	Day_PDD               string
+	Direction             string
 }
 type collector struct {
 	target   string
@@ -304,7 +304,8 @@ func addMetric(ch chan<- prometheus.Metric, name string, value string) error {
 }
 func addTrunkMetrics(ch chan<- prometheus.Metric, trunk Trunk, metricNames []string) error {
 	for _, metric := range metricNames {
-		metricName := fmt.Sprintf("sansay_trunk_%s", strings.ToLower(metric))
+		baseName := strings.ToLower(metric)
+		metricName := fmt.Sprintf("sansay_trunk_%s", baseName)
 
 		value, err := getField(&trunk, metric)
 		if err != nil {
@@ -317,17 +318,22 @@ func addTrunkMetrics(ch chan<- prometheus.Metric, trunk Trunk, metricNames []str
 			continue
 		}
 		//fmt.Printf("New Metric: %s TG=%s Alias=%s\n", metricName, trunk.TrunkId, trunk.Alias)
-		if trunk.Direction == "" {
-			ch <- prometheus.MustNewConstMetric(
-				prometheus.NewDesc(metricName, "", []string{"trunkgroup", "alias"}, nil),
-				prometheus.GaugeValue,
-				floatValue, trunk.TrunkId, trunk.Alias)
-		} else {
-			ch <- prometheus.MustNewConstMetric(
-				prometheus.NewDesc(metricName, "", []string{"trunkgroup", "alias", "direction"}, nil),
-				prometheus.GaugeValue,
-				floatValue, trunk.TrunkId, trunk.Alias, trunk.Direction)
+		labels := []string{"trunkgroup", "alias"}
+		labelValues := []string{trunk.TrunkId, trunk.Alias}
+		if trunk.Direction != "" {
+			labels = append(labels, "direction")
+			labelValues = append(labelValues, trunk.Direction)
+			fieldName := strings.Split(baseName, "_")
+			if fieldName[1] == "calls" {
+				labels = append(labels, "status")
+				labelValues = append(labelValues, fieldName[2])
+				metricName = metricName[0:strings.LastIndex(metricName, "_")]
+			}
 		}
+		ch <- prometheus.MustNewConstMetric(
+			prometheus.NewDesc(metricName, "", labels, nil),
+			prometheus.GaugeValue,
+			floatValue, labelValues...)
 	}
 	return nil
 }

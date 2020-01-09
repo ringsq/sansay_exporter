@@ -268,6 +268,11 @@ func ScrapeTarget(c collector, path string, result chan<- interface{}, wg *sync.
 		return
 	}
 	level.Info(logger).Log("msg", "Received HTTP response", "status_code", resp.StatusCode)
+	if resp.StatusCode > 300 {
+		result <- fmt.Errorf("Invalid response from server: %d", resp.StatusCode)
+		wg.Done()
+		return
+	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)

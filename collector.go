@@ -155,7 +155,6 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 		if err != nil {
 			level.Info(c.logger).Log("msg", "Error scraping target", "err", err)
 			ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
-			return
 		}
 		c.processCollection(ch, sansay)
 	}

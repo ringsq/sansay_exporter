@@ -21,7 +21,7 @@ _testmain.go
 
 *.exe
 dependencies-stamp
-/blackbox_exporter
+sansay_exporter
 /.build
 /.release
 /.tarballs

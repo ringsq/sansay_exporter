@@ -31,7 +31,7 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
-const targetPath = "/SSConfig/webresources/stats/realtime"
+const targetPath = "/SSConfig/webresources/stats/"
 
 var (
 	listenAddress = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9116").String()

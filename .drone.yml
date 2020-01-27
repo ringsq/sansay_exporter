@@ -1,0 +1,28 @@
+---
+kind: pipeline
+type: docker
+name: default
+
+steps:
+- name: test
+  image: golang:1.13
+  volumes:
+  - name: deps
+    path: /go
+  commands:
+  - go test ./...
+
+- name: build
+  image: golang:1.13
+  volumes:
+  - name: deps
+    path: /go
+  commands:
+  - go build
+
+trigger:
+  branch: 
+    - master
+  event:
+    - pull_request
+    - push

@@ -1,3 +1,5 @@
+[![Build Status](https://drone.m5.run/api/badges/magna5/sansay_exporter/status.svg)](https://drone.m5.run/magna5/sansay_exporter)
+
 # sansay exporter
 
 

@@ -61,6 +61,22 @@ type Sansay struct {
 	} `xml:"database"`
 }
 
+type XBMediaServerRealTimeStatList struct {
+	XMLName                   xml.Name `xml:"XBMediaServerRealTimeStatList"`
+	Text                      string   `xml:",chardata"`
+	XBMediaServerRealTimeStat []struct {
+		Text              string `xml:",chardata"`
+		MediaSrvIndex     string `xml:"mediaSrvIndex"`
+		PublicIP          string `xml:"publicIP"`
+		MaxConnections    string `xml:"maxConnections"`
+		Priority          string `xml:"priority"`
+		Alias             string `xml:"alias"`
+		SwitchType        string `xml:"switchType"`
+		Status            string `xml:"status"`
+		NumActiveSessions string `xml:"numActiveSessions"`
+	} `xml:"XBMediaServerRealTimeStat"`
+}
+
 var trunkfields = map[string]string{
 	"1st15mins_call_attempt":     "Fifteen_Calls_Attempt",
 	"1st15mins_call_answer":      "Fifteen_Calls_Answer",
@@ -129,10 +145,9 @@ func (c collector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements Prometheus.Collector.
 func (c collector) Collect(ch chan<- prometheus.Metric) {
-	paths := []string{"realtime", "resource"}
+	paths := []string{"realtime", "resource", "media_server"}
 	var wg sync.WaitGroup
 	var err error
-	var sansay Sansay
 	start := time.Now()
 	results := make(chan interface{})
 	defer close(results)
@@ -143,20 +158,21 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 	for i := 0; i < len(paths); i++ {
 		result := <-results
 		switch obj := result.(type) {
-		case error:
-			err = obj
 		case Sansay:
 			err = nil
-			sansay = obj
+			c.processCollection(ch, obj)
+		case XBMediaServerRealTimeStatList:
+			err = nil
+			c.processMediaCollection(ch, obj)
+		case error:
+			err = obj
 		default:
 			err = errors.New("Invalid type returned from target")
 		}
-
 		if err != nil {
 			level.Info(c.logger).Log("msg", "Error scraping target", "err", err)
 			ch <- prometheus.NewInvalidMetric(prometheus.NewDesc("sansay_error", "Error scraping target", nil, nil), err)
 		}
-		c.processCollection(ch, sansay)
 	}
 	wg.Wait()
 	ch <- prometheus.MustNewConstMetric(
@@ -164,6 +180,28 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 		prometheus.GaugeValue,
 		time.Since(start).Seconds())
 
+}
+
+// processMediaCollection creates the metrics for the media server statistics.  The media server stats are
+// a totally different format than then other endpoints.
+func (c collector) processMediaCollection(ch chan<- prometheus.Metric, media XBMediaServerRealTimeStatList) {
+	for _, mediaServer := range media.XBMediaServerRealTimeStat {
+		var msType string
+		words := strings.Split(mediaServer.SwitchType, " ")
+		msType = words[len(words)-1]
+		if strings.LastIndex(msType, "-") > 0 {
+			msType = msType[strings.LastIndex(msType, "-")+1:]
+		}
+		labels := []string{"server", "server_ip", "type"}
+		labelValues := []string{mediaServer.Alias, mediaServer.PublicIP, msType}
+		status := "0"
+		if mediaServer.Status == "up" {
+			status = "1"
+		}
+		addLabeledMetric(ch, "mediaserver_up", status, labels, labelValues)
+		addLabeledMetric(ch, "mediaserver_sessions_limit", mediaServer.MaxConnections, labels, labelValues)
+		addLabeledMetric(ch, "mediaserver_sessions", mediaServer.NumActiveSessions, labels, labelValues)
+	}
 }
 
 func (c collector) processCollection(ch chan<- prometheus.Metric, sansay Sansay) {
@@ -236,7 +274,9 @@ func ScrapeTarget(c collector, path string, result chan<- interface{}, wg *sync.
 	username := c.username
 	password := c.password
 	logger := c.logger
+	var obj interface{}
 	var sansay Sansay
+	var media XBMediaServerRealTimeStatList
 
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
 		target = "http://" + target
@@ -282,14 +322,20 @@ func ScrapeTarget(c collector, path string, result chan<- interface{}, wg *sync.
 		wg.Done()
 		return
 	}
-	err = xml.Unmarshal(body, &sansay)
+	if strings.HasSuffix(path, "media_server") {
+		err = xml.Unmarshal(body, &media)
+		obj = media
+	} else {
+		err = xml.Unmarshal(body, &sansay)
+		obj = sansay
+	}
 	if err != nil {
 		level.Error(logger).Log("msg", "Error parsing XML", "err", err)
 		result <- err
 		wg.Done()
 		return
 	}
-	result <- sansay
+	result <- obj
 	wg.Done()
 	return
 }
@@ -306,6 +352,20 @@ func addMetric(ch chan<- prometheus.Metric, name string, value string) error {
 		floatValue)
 	return nil
 }
+
+func addLabeledMetric(ch chan<- prometheus.Metric, name string, value string, labels []string, labelValues []string) error {
+	metricName := fmt.Sprintf("sansay_%s", name)
+	floatValue, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return err
+	}
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc(metricName, "", labels, nil),
+		prometheus.GaugeValue,
+		floatValue, labelValues...)
+	return nil
+}
+
 func addTrunkMetrics(ch chan<- prometheus.Metric, trunk Trunk, metricNames []string) error {
 	for _, metric := range metricNames {
 		baseName := strings.ToLower(metric)

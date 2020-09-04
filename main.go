@@ -88,6 +88,8 @@ func handler(w http.ResponseWriter, r *http.Request, logger log.Logger) {
 	registry := prometheus.NewRegistry()
 	collector := collector{target: fmt.Sprintf("%s://%s", protocol, target), targetPath: targetPath, useSoap: useSoap, username: username, password: password, logger: logger}
 	registry.MustRegister(collector)
+	registry.MustRegister(version.NewCollector("sansay_exporter"))
+
 	// Delegate http serving to Prometheus client library, which will call collector.Collect.
 	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	h.ServeHTTP(w, r)

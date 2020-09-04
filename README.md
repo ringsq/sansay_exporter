@@ -35,7 +35,7 @@ will return metrics against localhost:8888.
 >
 
 ```
-$ go build -mod=vendor
+$ go build -mod=vendor -ldflags '-X main.Version=x.x'
 ```
 
 ### Building with Docker

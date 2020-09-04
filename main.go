@@ -34,6 +34,8 @@ import (
 
 const targetPath = "/SSConfig/webresources/stats/"
 
+var Version = "dev"
+
 var (
 	listenAddress = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9116").String()
 	dryRun        = kingpin.Flag("dry-run", "Only verify configuration is valid and exit.").Default("false").Bool()
@@ -54,6 +56,7 @@ var (
 )
 
 func init() {
+	version.Version = Version
 	prometheus.MustRegister(sansayDuration)
 	prometheus.MustRegister(sansayRequestErrors)
 	prometheus.MustRegister(version.NewCollector("sansay_exporter"))

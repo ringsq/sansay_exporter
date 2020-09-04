@@ -344,13 +344,14 @@ func callRestAPI(c collector, path string) ([]byte, error) {
 	}
 	level.Info(logger).Log("msg", "Received HTTP response", "status_code", resp.StatusCode)
 	if resp.StatusCode == 404 {
+		resp.Body.Close()
 		return callSoapAPI(c, path)
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode > 300 {
 		err = fmt.Errorf("Invalid response from server: %d", resp.StatusCode)
 		return nil, err
 	}
-	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {

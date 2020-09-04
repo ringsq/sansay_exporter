@@ -14,6 +14,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
+	"github.com/hooklift/gowsdl/soap"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -126,10 +128,12 @@ type Trunk struct {
 	Direction             string
 }
 type collector struct {
-	target   string
-	username string
-	password string
-	logger   log.Logger
+	target     string
+	targetPath string
+	username   string
+	password   string
+	logger     log.Logger
+	useSoap    bool
 }
 
 func init() {
@@ -270,57 +274,27 @@ func (c collector) processCollection(ch chan<- prometheus.Metric, sansay Sansay)
 
 // ScrapeTarget scrapes the Sansay API
 func ScrapeTarget(c collector, path string, result chan<- interface{}, wg *sync.WaitGroup) {
-	target := fmt.Sprintf("%s%s", c.target, path)
-	username := c.username
-	password := c.password
 	logger := c.logger
 	var obj interface{}
 	var sansay Sansay
 	var media XBMediaServerRealTimeStatList
+	var body []byte
+	var err error
 
-	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-		target = "http://" + target
-	}
-
-	_, err := url.Parse(target)
-	if err != nil {
-		level.Error(logger).Log("msg", "Could not parse target URL", "err", err)
-		result <- err
-		wg.Done()
-		return
-	}
-	client := &http.Client{}
-	request, err := http.NewRequest("GET", target, http.NoBody)
-	if err != nil {
-		level.Error(logger).Log("msg", "Error creating HTTP request", "err", err)
-		result <- err
-		wg.Done()
-		return
-	}
-
-	request.SetBasicAuth(username, password)
-	resp, err := client.Do(request)
-
-	if err != nil {
-		level.Error(logger).Log("msg", "Error for HTTP request", "err", err)
-		result <- err
-		wg.Done()
-		return
-	}
-	level.Info(logger).Log("msg", "Received HTTP response", "status_code", resp.StatusCode)
-	if resp.StatusCode > 300 {
-		result <- fmt.Errorf("Invalid response from server: %d", resp.StatusCode)
-		wg.Done()
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		level.Info(logger).Log("msg", "Failed to read HTTP response body", "err", err)
-		result <- err
-		wg.Done()
-		return
+	if c.useSoap {
+		body, err = callSoapAPI(c, path)
+		if err != nil {
+			result <- err
+			wg.Done()
+			return
+		}
+	} else {
+		body, err = callRestAPI(c, path)
+		if err != nil {
+			result <- err
+			wg.Done()
+			return
+		}
 	}
 	if strings.HasSuffix(path, "media_server") {
 		err = xml.Unmarshal(body, &media)
@@ -338,6 +312,76 @@ func ScrapeTarget(c collector, path string, result chan<- interface{}, wg *sync.
 	result <- obj
 	wg.Done()
 	return
+}
+
+func callRestAPI(c collector, path string) ([]byte, error) {
+	username := c.username
+	password := c.password
+	logger := c.logger
+	target := fmt.Sprintf("%s%s%s", c.target, c.targetPath, path)
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "http://" + target
+	}
+
+	_, err := url.Parse(target)
+	if err != nil {
+		level.Error(logger).Log("msg", "Could not parse target URL", "err", err)
+		return nil, err
+	}
+	client := &http.Client{}
+	request, err := http.NewRequest("GET", target, http.NoBody)
+	if err != nil {
+		level.Error(logger).Log("msg", "Error creating HTTP request", "err", err)
+		return nil, err
+	}
+
+	request.SetBasicAuth(username, password)
+	resp, err := client.Do(request)
+
+	if err != nil {
+		level.Error(logger).Log("msg", "Error for HTTP request", "err", err)
+		return nil, err
+	}
+	level.Info(logger).Log("msg", "Received HTTP response", "status_code", resp.StatusCode)
+	if resp.StatusCode == 404 {
+		return callSoapAPI(c, path)
+	}
+	if resp.StatusCode > 300 {
+		err = fmt.Errorf("Invalid response from server: %d", resp.StatusCode)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		level.Info(logger).Log("msg", "Failed to read HTTP response body", "err", err)
+		return nil, err
+	}
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+// callSoapAPI makes a SOAP call to the Sansay SBC -- used for older OS versions
+func callSoapAPI(c collector, path string) ([]byte, error) {
+	target := fmt.Sprintf("%s%s", c.target, "/SSConfig/SansayWS")
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "http://" + target
+	}
+	client := soap.NewClient(target, soap.WithTLS(&tls.Config{InsecureSkipVerify: true}))
+	service := NewSansayWS(client)
+	params := &RealTimeStatsParams{
+		Username: c.username,
+		Password: c.password,
+		StatName: path,
+	}
+	reply, err := service.DoRealTimeStats(params)
+	if err != nil {
+		level.Error(c.logger).Log("msg", "Error calling SOAP API", "err", err)
+		return nil, err
+	}
+	return []byte(reply.Xmlfile), nil
 }
 
 func addMetric(ch chan<- prometheus.Metric, name string, value string) error {

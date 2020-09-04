@@ -30,14 +30,19 @@ will return metrics against localhost:8888.
 
 ### Local Build
 
-    make
+> **IMPORTANT NOTE:** For the SOAP interface to work correctly took a modification to the gowsdl library, which was made in the vendored version.  
+> Therefore, to build and run successfully you *MUST* use the vendored version:
+>
 
+```
+$ go build -mod=vendor
+```
 
 ### Building with Docker
 
 After a successful local build:
 
-    docker build -t sansay_exporter .
+    docker build  -t sansay_exporter .
 
 ## Configuration
 

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-kit/kit/log"
@@ -59,6 +60,7 @@ func init() {
 }
 
 func handler(w http.ResponseWriter, r *http.Request, logger log.Logger) {
+	useSoap := false
 	target := r.URL.Query().Get("target")
 	if target == "" {
 		http.Error(w, "'target' parameter must be specified", 400)
@@ -71,13 +73,17 @@ func handler(w http.ResponseWriter, r *http.Request, logger log.Logger) {
 	if protocol == "" {
 		protocol = "https"
 	}
+	api := r.URL.Query().Get("api")
+	if strings.ToLower(api) == "soap" {
+		useSoap = true
+	}
 
 	logger = log.With(logger, "target", target)
 	level.Debug(logger).Log("msg", "Starting scrape", "module")
 
 	start := time.Now()
 	registry := prometheus.NewRegistry()
-	collector := collector{target: fmt.Sprintf("%s://%s%s", protocol, target, targetPath), username: username, password: password, logger: logger}
+	collector := collector{target: fmt.Sprintf("%s://%s", protocol, target), targetPath: targetPath, useSoap: useSoap, username: username, password: password, logger: logger}
 	registry.MustRegister(collector)
 	// Delegate http serving to Prometheus client library, which will call collector.Collect.
 	h := promhttp.HandlerFor(registry, promhttp.HandlerOpts{})

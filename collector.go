@@ -28,6 +28,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/magna5/sansay_exporter/models"
+
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/hooklift/gowsdl/soap"
@@ -149,7 +151,7 @@ func (c collector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements Prometheus.Collector.
 func (c collector) Collect(ch chan<- prometheus.Metric) {
-	paths := []string{"realtime", "resource", "media_server"}
+	paths := []string{"stats/realtime", "stats/resource", "stats/media_server", "download/resource"}
 	var wg sync.WaitGroup
 	var err error
 	start := time.Now()
@@ -168,6 +170,9 @@ func (c collector) Collect(ch chan<- prometheus.Metric) {
 		case XBMediaServerRealTimeStatList:
 			err = nil
 			c.processMediaCollection(ch, obj)
+		case models.XBResourceList:
+			err = nil
+			c.processXBResourceList(ch, obj)
 		case error:
 			err = obj
 		default:
@@ -205,6 +210,17 @@ func (c collector) processMediaCollection(ch chan<- prometheus.Metric, media XBM
 		addLabeledMetric(ch, "mediaserver_up", status, labels, labelValues)
 		addLabeledMetric(ch, "mediaserver_sessions_limit", mediaServer.MaxConnections, labels, labelValues)
 		addLabeledMetric(ch, "mediaserver_sessions", mediaServer.NumActiveSessions, labels, labelValues)
+	}
+}
+
+// processXBResourceList creates the metrics for the resource configurations.
+func (c collector) processXBResourceList(ch chan<- prometheus.Metric, resources models.XBResourceList) {
+	labels := []string{"trunkgroup", "alias"}
+	var labelValues []string
+	for _, resource := range resources.XBResource {
+		labelValues = []string{resource.TrunkId, resource.Name}
+		addLabeledMetric(ch, "config_trunk_sessions_max", resource.Capacity, labels, labelValues)
+		addLabeledMetric(ch, "config_trunk_cps_max", resource.CpsLimit, labels, labelValues)
 	}
 }
 
@@ -278,6 +294,7 @@ func ScrapeTarget(c collector, path string, result chan<- interface{}, wg *sync.
 	var obj interface{}
 	var sansay Sansay
 	var media XBMediaServerRealTimeStatList
+	var resourceList models.XBResourceList
 	var body []byte
 	var err error
 
@@ -299,12 +316,15 @@ func ScrapeTarget(c collector, path string, result chan<- interface{}, wg *sync.
 	if strings.HasSuffix(path, "media_server") {
 		err = xml.Unmarshal(body, &media)
 		obj = media
+	} else if strings.HasSuffix(path, "download/resource") {
+		err = xml.Unmarshal(body, &resourceList)
+		obj = resourceList
 	} else {
 		err = xml.Unmarshal(body, &sansay)
 		obj = sansay
 	}
 	if err != nil {
-		level.Error(logger).Log("msg", "Error parsing XML", "err", err)
+		level.Error(logger).Log("msg", "Error parsing XML", "path", path, "err", err)
 		result <- err
 		wg.Done()
 		return
@@ -366,23 +386,50 @@ func callRestAPI(c collector, path string) ([]byte, error) {
 
 // callSoapAPI makes a SOAP call to the Sansay SBC -- used for older OS versions
 func callSoapAPI(c collector, path string) ([]byte, error) {
+	var err error
+	var response []byte
+	var statName string
+
+	// Determine the stat name by splitting the path
+	paths := strings.Split(path, "/")
+	if len(paths) == 1 {
+		statName = paths[0]
+	} else {
+		statName = paths[len(paths)-1]
+	}
+
 	target := fmt.Sprintf("%s%s", c.target, "/SSConfig/SansayWS")
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
 		target = "http://" + target
 	}
 	client := soap.NewClient(target, soap.WithTLS(&tls.Config{InsecureSkipVerify: true}))
 	service := NewSansayWS(client)
-	params := &RealTimeStatsParams{
-		Username: c.username,
-		Password: c.password,
-		StatName: path,
+	if strings.HasSuffix(path, "download/resource") {
+		params := &DownloadParams{
+			Username: c.username,
+			Password: c.password,
+			Page:     0,
+			Table:    "resource",
+		}
+
+		if reply, err := service.DoDownloadXmlFile(params); err == nil {
+			response = []byte(reply.Xmlfile)
+		}
+	} else {
+		params := &RealTimeStatsParams{
+			Username: c.username,
+			Password: c.password,
+			StatName: statName,
+		}
+		if reply, err := service.DoRealTimeStats(params); err == nil {
+			response = []byte(reply.Xmlfile)
+		}
 	}
-	reply, err := service.DoRealTimeStats(params)
 	if err != nil {
 		level.Error(c.logger).Log("msg", "Error calling SOAP API", "err", err)
 		return nil, err
 	}
-	return []byte(reply.Xmlfile), nil
+	return response, nil
 }
 
 func addMetric(ch chan<- prometheus.Metric, name string, value string) error {

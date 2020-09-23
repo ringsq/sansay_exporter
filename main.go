@@ -32,7 +32,7 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
-const targetPath = "/SSConfig/webresources/stats/"
+const targetPath = "/SSConfig/webresources/"
 
 var Version = "dev"
 

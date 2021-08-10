@@ -1,4 +1,4 @@
-module github.com/magna5/sansay_exporter
+module github.com/ringsq/sansay_exporter
 
 require (
 	github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751 // indirect

@@ -8,7 +8,7 @@ HTTP, HTTPS.  Much of this code was taken from [snmp_exporter](https://github.co
 
 ### From binaries
 
-Download the most suitable binary from [the releases tab](https://github.com/magna5/sansay_exporter/releases)
+Download the most suitable binary from [the releases tab](https://github.com/ringsq/sansay_exporter/releases)
 
 Then:
 

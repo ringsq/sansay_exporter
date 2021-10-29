@@ -3,7 +3,7 @@ go:
     # .circle/config.yml should also be updated.
     version: 1.13
 repository:
-    path: github.com/magna5/sansay_exporter
+    path: github.com/ringsq/sansay_exporter
 build:
     flags: -mod=vendor -a -tags netgo
     ldflags: |

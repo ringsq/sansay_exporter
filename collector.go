@@ -28,7 +28,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/magna5/sansay_exporter/models"
+	"github.com/ringsq/sansay_exporter/models"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"

@@ -9,7 +9,7 @@ require (
 	github.com/pkg/errors v0.8.1 // indirect
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/common v0.6.0
-	golang.org/x/sys v0.0.0-20200107162124-548cf772de50 // indirect
+	golang.org/x/sys v0.1.0 // indirect
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 )
 
